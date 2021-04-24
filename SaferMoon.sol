@@ -45,10 +45,17 @@ contract SaferMoon is Context, IERC20, Ownable {
     bool public swapAndLiquifyEnabled = true;
 
     uint256 public _maxTxAmount = 5000000 * 10**6 * 10**9;
-    uint256 private numTokensSellToAddToLiquidity = 500000 * 10**6 * 10**9;
+    uint256 public numTokensSellToAddToLiquidity = 500000 * 10**6 * 10**9;
 
-    event MinTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap);
+    event TaxFeeUpdated(uint256 taxFee);
+    event LiquidityFeeUpdated(uint256 liquidityFee);
+    event ExcludeFromRewardUpdated(address account);
+    event IncludeInRewardUpdated(address account);
+    event ExcludeFromFeeUpdated(address account);
+    event IncludeInFeeUpdated(address account);
+    event MaxTxAmountUpdated(uint _maxTxAmount);
     event SwapAndLiquifyEnabledUpdated(bool enabled);
+    event NumTokensSellToAddToLiquidityUpdated(uint256 _numTokensSellToAddToLiquidity);
     event SwapAndLiquify(
         uint256 tokensSwapped,
         uint256 ethReceived,
@@ -61,13 +68,24 @@ contract SaferMoon is Context, IERC20, Ownable {
         inSwapAndLiquify = false;
     }
 
-    enum Lock { TAX_FEE, LIQUIDITY_FEE }
+    enum Lock {
+      TAX_FEE,
+      LIQUIDITY_FEE,
+      EXCLUDE_FROM_REWARD,
+      INCLUDE_IN_REWARD,
+      EXCLUDE_FROM_FEE,
+      INCLUDE_IN_FEE,
+      MAX_TX,
+      SWAP_AND_LIQUIFY_ENABLED,
+      NUM_TOKENS_SELL_TO_ADD_TO_LIQUIDITY
+    }
     uint256 private constant _TIMELOCK = 1 days;
     mapping(Lock => uint256) public timelocks;
 
     modifier unlocked(Lock _lock) {
       require(timelocks[_lock] != 0 && timelocks[_lock] <= block.timestamp, "Function is timelocked");
       _;
+      timelocks[_lock] = 0;
     }
 
     constructor () public {
@@ -173,16 +191,17 @@ contract SaferMoon is Context, IERC20, Ownable {
         return rAmount.div(currentRate);
     }
 
-    function excludeFromReward(address account) public onlyOwner() {
+    function excludeFromReward(address account) public onlyOwner unlocked(Lock.EXCLUDE_FROM_REWARD) {
         require(!_isExcluded[account], "Account is already excluded");
         if(_rOwned[account] > 0) {
             _tOwned[account] = tokenFromReflection(_rOwned[account]);
         }
         _isExcluded[account] = true;
         _excluded.push(account);
+        emit ExcludeFromRewardUpdated(account);
     }
 
-    function includeInReward(address account) external onlyOwner() {
+    function includeInReward(address account) external onlyOwner unlocked(Lock.INCLUDE_IN_REWARD) {
         require(_isExcluded[account], "Account is already excluded");
         for (uint256 i = 0; i < _excluded.length; i++) {
             if (_excluded[i] == account) {
@@ -193,6 +212,7 @@ contract SaferMoon is Context, IERC20, Ownable {
                 break;
             }
         }
+        emit IncludeInRewardUpdated(account);
     }
 
     function _transferBothExcluded(address sender, address recipient, uint256 tAmount) private {
@@ -206,31 +226,45 @@ contract SaferMoon is Context, IERC20, Ownable {
         emit Transfer(sender, recipient, tTransferAmount);
     }
 
-    function excludeFromFee(address account) public onlyOwner {
+    function excludeFromFee(address account) public onlyOwner unlocked(Lock.EXCLUDE_FROM_FEE) {
         _isExcludedFromFee[account] = true;
+        emit ExcludeFromFeeUpdated(account);
     }
 
-    function includeInFee(address account) public onlyOwner {
+    function includeInFee(address account) public onlyOwner unlocked(Lock.INCLUDE_IN_FEE) {
         _isExcludedFromFee[account] = false;
+        emit IncludeInFeeUpdated(account);
     }
 
     function setTaxFeePercent(uint256 taxFee) external onlyOwner unlocked(Lock.TAX_FEE) {
+        require(taxFee <= 15, "Amount must be less than or equal to 15");
         _taxFee = taxFee;
+        emit TaxFeeUpdated(taxFee);
     }
 
     function setLiquidityFeePercent(uint256 liquidityFee) external onlyOwner unlocked(Lock.LIQUIDITY_FEE) {
+        require(liquidityFee <= 15, "Amount must be less than or equal to 15");
         _liquidityFee = liquidityFee;
+        emit LiquidityFeeUpdated(liquidityFee);
     }
 
-    function setMaxTxPercent(uint256 maxTxPercent) external onlyOwner() {
+    function setMaxTxPercent(uint256 maxTxPercent) external onlyOwner unlocked(Lock.MAX_TX) {
+        require(maxTxPercent > 0, "Amount must be greater than 0");
         _maxTxAmount = _tTotal.mul(maxTxPercent).div(
             10**2
         );
+        emit MaxTxAmountUpdated(_maxTxAmount);
     }
 
-    function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner {
+    function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner unlocked(Lock.SWAP_AND_LIQUIFY_ENABLED) {
         swapAndLiquifyEnabled = _enabled;
         emit SwapAndLiquifyEnabledUpdated(_enabled);
+    }
+
+    function setNumTokensSellToAddToLiquidity(uint256 _numTokensSellToAddToLiquidity) external onlyOwner unlocked(Lock.NUM_TOKENS_SELL_TO_ADD_TO_LIQUIDITY) {
+      require(_numTokensSellToAddToLiquidity < numTokensSellToAddToLiquidity, "Amount must be less than numTokensSellToAddToLiquidity");
+      numTokensSellToAddToLiquidity = _numTokensSellToAddToLiquidity;
+      emit NumTokensSellToAddToLiquidityUpdated(_numTokensSellToAddToLiquidity);
     }
 
      //to recieve ETH from uniswapV2Router when swapping
